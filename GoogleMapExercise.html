@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <title>ZeroFox: Baltimore City Parks Geocoded and Pinned on Google Map</title>
+        
+        <meta name="viewport" content="initial-scale=1.0, user-scalable=no">
+        <meta charset="utf-8">
+        <style>
+        #map-canvas {
+          height: 600px;
+          width: 600px;
+          margin: 0px;
+          padding: 0px
+        }
+        </style>
+        <script src="https://maps.googleapis.com/maps/api/js?v=3.exp"></script>
+
+        <script type="text/javascript" src="https://code.jquery.com/jquery-2.1.1.min.js"></script>        
+        <script type="text/javascript" src="http://cdn.ucb.org.br/Scripts/tablesorter/jquery.tablesorter.min.js"></script>
+        <link rel="stylesheet" type="text/css" href="http://cdn.ucb.org.br/Scripts/tablesorter/blue/style.css" />
+
+        <script>
+        var baltimoreCityParksDataUrl = "https://data.baltimorecity.gov/api/views/3r8a-uawz/rows.json?accessType=DOWNLOAD";
+        var FIELD = {
+            "NAME": 8,
+            "ADDRESS": 11,
+            "DISTRICT": 9,
+            "ACREAGE": 10
+        };        
+        var parks = [];
+        $( document ).ready(function() {
+            $("#baltimoreCityParks").tablesorter();               
+            $.getJSON(baltimoreCityParksDataUrl, function(json) {
+                //console.log(json.data);
+                $.each(json.data, function(index, datum) {
+                    var park = {
+                        name: datum[FIELD.NAME],
+                        address: addressJsonToString(datum[FIELD.ADDRESS][0]),
+                        district: datum[FIELD.DISTRICT],
+                        acreage: parseFloat(datum[FIELD.ACREAGE]).toFixed(2)
+                    }
+                    addRowToParksTable(park); 
+                    parks.push(park);
+                });
+                $("#baltimoreCityParks").trigger("update");
+                initGMap();
+            });                
+        });
+        
+        function addRowToParksTable(park) {
+            $("#baltimoreCityParks tbody").append(
+                "<tr>"
+                + "<td>" + park.name + "</td>"
+                + "<td>" + park.address + "</td>"
+                + "<td>" + park.district + "</td>"
+                + "<td>" + park.acreage + "</td>"
+                + "</tr>"
+            );
+        }
+
+        function addressJsonToString(addressJson) {
+            var address = jQuery.parseJSON(addressJson); 
+            if (!address) return "";
+            return address["address"] + " " + address["city"] + ", " + address["state"] + " " + address["zip"];           
+        }
+        
+        var CENTER_OF_BALTIMORE = new google.maps.LatLng(39.292944, -76.590960);
+        var map;
+        var rateLimitDelayMS = 10000;
+        var geocoder = new google.maps.Geocoder(); 
+        var bounds = new google.maps.LatLngBounds();
+        var parksMapped = 0;
+        
+        function initGMap() {
+            var mapOptions = {
+                zoom: 12,
+                center: CENTER_OF_BALTIMORE,
+                mapTypeId: google.maps.MapTypeId.ROADMAP
+            };
+            map = new google.maps.Map(document.getElementById('map-canvas'), mapOptions);
+            $.each(parks, function(index, park){                                
+                geocodeParkAndMarkOnMap(park);                
+            });
+            fitMapToBoundsAfterAllParksHandled();
+        }
+        
+        // returning true continues the jQuery each array loop 
+        function geocodeParkAndMarkOnMap(park) {
+            if (!park.address) { 
+                parksMapped++;
+                return true; 
+            }
+            geocoder.geocode({address: park.address}, function(results, status){
+                if (status === google.maps.GeocoderStatus.OVER_QUERY_LIMIT) {
+                    console.log("Over rate limit. Queuing up park for geocoding again [" + park.address + "] after [" + rateLimitDelayMS + "] milliseconds.");
+                    setTimeout(function() { geocodeParkAndMarkOnMap(park); }, rateLimitDelayMS++);
+                    return true;
+                } else if (status != google.maps.GeocoderStatus.OK) {
+                    parksMapped++;
+                    console.log("Geocoding failed for the address [" + park.address + "] with the following error status code [" + status + "]");
+                    return true; // continues a jQuery each loop 
+                } 
+                var p = results[0].geometry.location;
+                var lat=p.lat();
+                var lng=p.lng();
+                createMarker(park, lat, lng);
+                parksMapped++;
+            });
+        }
+        
+        function createMarker(park, lat, lng) {
+            var contentString = 
+                '<table><tbody>' 
+                    + '<tr><td><strong>Name:</strong></td><td>' + park.name + '</td></tr>'
+                    + '<tr><td><strong>Address:</strong></td><td>' + park.address + '</td></tr>'
+                    + '<tr><td><strong>District:</strong></td><td>' + park.district + '</td></tr>'
+                    + '<tr><td><strong>Acreage:</strong></td><td>' + park.acreage + '</td></tr>'
+                + '</tbody></table>';    
+            var infowindow = new google.maps.InfoWindow({
+                content: contentString
+            });
+            var marker = new google.maps.Marker({
+                position: new google.maps.LatLng(lat, lng),
+                map: map,
+                title: park.name
+            });
+            google.maps.event.addListener(marker, 'click', function() {
+              infowindow.open(map,marker);
+            });
+            bounds.extend(marker.position);
+        }
+        
+        function fitMapToBoundsAfterAllParksHandled() {
+            if (parksMapped != parks.length) {
+                console.log("Waiting to resize map. Parks [" + parks.length + "] parks handled [" + parksMapped + "]");
+                setTimeout(function() { fitMapToBoundsAfterAllParksHandled() }, rateLimitDelayMS * 2);
+            } else {
+                map.fitBounds(bounds);
+                console.log("FINISHED. All parks handled.");
+            }
+        }
+        </script>
+    </head>
+    <body>
+        <div id="map-canvas"></div>
+        <!-- http://tablesorter.com/docs/ -->
+        <table id="baltimoreCityParks" class="tablesorter">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Address</th>
+                    <th>District</th>
+                    <th>Acreage</th>
+                <tr>
+            </thead>
+            <tbody/>
+        </table>
+    </body>
+</html>
